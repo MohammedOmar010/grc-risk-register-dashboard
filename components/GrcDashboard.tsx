@@ -17,13 +17,24 @@ import { AlertTriangle, CheckCircle2, Clock, FileText, Plus, ShieldCheck, Trash2
 import type { Risk, RiskFormData, RiskLevel, RiskStatus } from "@/types/risk";
 import { calculateRiskScore, getLevelBadgeClasses, getRiskLevel, getStatusBadgeClasses } from "@/lib/risk-calculation";
 import { sampleRisks } from "@/lib/sample-data";
+import {
+  buildFrameworkReference,
+  csfFunctionOptions,
+  impactOptions,
+  likelihoodOptions,
+  riskCategoryOptions,
+  statusOptions,
+  treatmentOptions,
+} from "@/lib/risk-options";
 
 const storageKey = "grc-risk-register-v1";
+
+const defaultCategory = riskCategoryOptions[0];
 
 const defaultForm: RiskFormData = {
   title: "",
   description: "",
-  category: "الوصول والهوية",
+  category: defaultCategory.value,
   asset: "",
   threat: "",
   vulnerability: "",
@@ -32,36 +43,73 @@ const defaultForm: RiskFormData = {
   owner: "",
   department: "",
   mitigationPlan: "",
-  control: "",
-  frameworkRef: "NIST SP 800-53:",
-  csfFunction: "Govern",
+  control: defaultCategory.suggestedControlText,
+  frameworkRef: buildFrameworkReference(defaultCategory.suggestedControls),
+  csfFunction: defaultCategory.suggestedCsfFunction,
   treatment: "تخفيف",
   status: "مفتوح",
   dueDate: "",
 };
 
-const categories = [
-  "الوصول والهوية",
-  "إدارة الثغرات",
-  "التوعية الأمنية",
-  "استمرارية الأعمال",
-  "الأمن السحابي",
-  "الاستجابة للحوادث",
-  "إدارة الأصول",
-  "الأطراف الخارجية",
-  "أمن الشبكات",
-];
+const riskLevelOrder: RiskLevel[] = ["حرج", "عالي", "متوسط", "منخفض"];
+const statusOrder: RiskStatus[] = ["مفتوح", "قيد المعالجة", "مغلق"];
 
-const chartColors = ["#0f172a", "#334155", "#64748b", "#94a3b8", "#cbd5e1", "#475569"];
+const riskLevelChartColors: Record<RiskLevel, string> = {
+  "حرج": "#dc2626", // أحمر: يحتاج تدخل عاجل
+  "عالي": "#f97316", // برتقالي: أولوية عالية
+  "متوسط": "#eab308", // أصفر: يحتاج متابعة
+  "منخفض": "#22c55e", // أخضر: تحت السيطرة غالبًا
+};
 
-function countBy<T extends string>(risks: Risk[], key: keyof Risk): { name: T; value: number }[] {
-  const counts = risks.reduce<Record<string, number>>((acc, risk) => {
-    const value = String(risk[key]);
-    acc[value] = (acc[value] || 0) + 1;
-    return acc;
-  }, {});
+const statusChartColors: Record<RiskStatus, string> = {
+  "مفتوح": "#ef4444", // أحمر: لم تتم معالجته بعد
+  "قيد المعالجة": "#f59e0b", // أصفر/برتقالي: جاري العمل عليه
+  "مغلق": "#22c55e", // أخضر: تمت المعالجة أو الإغلاق
+};
 
-  return Object.entries(counts).map(([name, value]) => ({ name: name as T, value }));
+const categoryChartColors: Record<string, string> = {
+  "الوصول والهوية": "#dc2626",
+  "إدارة الثغرات": "#f97316",
+  "التوعية الأمنية": "#eab308",
+  "استمرارية الأعمال": "#22c55e",
+  "الأمن السحابي": "#2563eb",
+  "الاستجابة للحوادث": "#7c3aed",
+  "إدارة الأصول": "#0f766e",
+  "الأطراف الخارجية": "#be123c",
+  "أمن الشبكات": "#0f172a",
+};
+
+function getLevelChartColor(level: string) {
+  return riskLevelChartColors[level as RiskLevel] || "#64748b";
+}
+
+function getStatusChartColor(status: string) {
+  return statusChartColors[status as RiskStatus] || "#64748b";
+}
+
+function getCategoryChartColor(category: string) {
+  return categoryChartColors[category] || "#64748b";
+}
+
+function countRiskLevels(risks: Risk[]) {
+  return riskLevelOrder
+    .map((level) => ({ name: level, value: risks.filter((risk) => risk.level === level).length }))
+    .filter((item) => item.value > 0);
+}
+
+function countRiskStatuses(risks: Risk[]) {
+  return statusOrder
+    .map((status) => ({ name: status, value: risks.filter((risk) => risk.status === status).length }))
+    .filter((item) => item.value > 0);
+}
+
+function countCategories(risks: Risk[]) {
+  return riskCategoryOptions
+    .map((category) => ({
+      name: category.value,
+      value: risks.filter((risk) => risk.category === category.value).length,
+    }))
+    .filter((item) => item.value > 0);
 }
 
 function todayIsoDate() {
@@ -82,6 +130,10 @@ function buildRisk(form: RiskFormData, previous?: Risk): Risk {
   };
 }
 
+function findOptionDescription<T extends { value: string | number; description: string }>(options: T[], value: string | number) {
+  return options.find((option) => option.value === value)?.description || "";
+}
+
 function MetricCard({ title, value, helper, icon }: { title: string; value: number | string; helper: string; icon: React.ReactNode }) {
   return (
     <div className="card p-5">
@@ -95,6 +147,10 @@ function MetricCard({ title, value, helper, icon }: { title: string; value: numb
       </div>
     </div>
   );
+}
+
+function FieldHelp({ children }: { children: React.ReactNode }) {
+  return <p className="mt-1 text-xs leading-5 text-slate-500">{children}</p>;
 }
 
 function RiskForm({
@@ -117,12 +173,36 @@ function RiskForm({
     setForm({ ...form, [key]: value });
   }
 
+  function updateCategory(categoryValue: string) {
+    const selectedCategory = riskCategoryOptions.find((category) => category.value === categoryValue);
+
+    if (!selectedCategory) {
+      update("category", categoryValue);
+      return;
+    }
+
+    setForm({
+      ...form,
+      category: selectedCategory.value,
+      csfFunction: selectedCategory.suggestedCsfFunction,
+      control: selectedCategory.suggestedControlText,
+      frameworkRef: buildFrameworkReference(selectedCategory.suggestedControls),
+    });
+  }
+
+  const likelihoodHelp = findOptionDescription(likelihoodOptions, form.likelihood);
+  const impactHelp = findOptionDescription(impactOptions, form.impact);
+  const statusHelp = findOptionDescription(statusOptions, form.status);
+  const treatmentHelp = findOptionDescription(treatmentOptions, form.treatment);
+  const csfHelp = findOptionDescription(csfFunctionOptions, form.csfFunction);
+  const selectedCategory = riskCategoryOptions.find((category) => category.value === form.category);
+
   return (
     <section className="card p-6">
       <div className="flex flex-col gap-2 border-b border-slate-100 pb-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="text-xl font-bold text-slate-950">{editingRisk ? "تعديل الخطر" : "إضافة خطر جديد"}</h2>
-          <p className="mt-1 text-sm text-slate-500">أدخل بيانات الخطر بلغة واضحة حتى يفهمها المختص وغير المختص.</p>
+          <p className="mt-1 text-sm text-slate-500">أدخل بيانات الخطر بلغة واضحة. الحقول الحساسة تم تحويلها لاختيارات لتقليل الأخطاء.</p>
         </div>
         <div className={`rounded-xl border px-3 py-2 text-sm font-bold ${getLevelBadgeClasses(previewLevel)}`}>
           الدرجة: {previewScore} — {previewLevel}
@@ -134,14 +214,17 @@ function RiskForm({
           <label className="label">عنوان الخطر</label>
           <input className="input" value={form.title} onChange={(e) => update("title", e.target.value)} placeholder="مثال: عدم تفعيل MFA" />
         </div>
+
         <div>
           <label className="label">التصنيف</label>
-          <select className="input" value={form.category} onChange={(e) => update("category", e.target.value)}>
-            {categories.map((category) => (
-              <option key={category}>{category}</option>
+          <select className="input" value={form.category} onChange={(e) => updateCategory(e.target.value)}>
+            {riskCategoryOptions.map((category) => (
+              <option key={category.value} value={category.value}>{category.label}</option>
             ))}
           </select>
+          <FieldHelp>عند اختيار التصنيف، يتم اقتراح وظيفة NIST CSF ومرجع NIST SP 800-53 تلقائيًا.</FieldHelp>
         </div>
+
         <div>
           <label className="label">الأصل المتأثر</label>
           <input className="input" value={form.asset} onChange={(e) => update("asset", e.target.value)} placeholder="مثال: حسابات الموظفين" />
@@ -158,54 +241,81 @@ function RiskForm({
           <label className="label">نقطة الضعف</label>
           <input className="input" value={form.vulnerability} onChange={(e) => update("vulnerability", e.target.value)} placeholder="مثال: كلمة مرور فقط" />
         </div>
+
         <div>
-          <label className="label">الاحتمالية 1 إلى 5</label>
-          <input className="input" type="number" min={1} max={5} value={form.likelihood} onChange={(e) => update("likelihood", Number(e.target.value))} />
+          <label className="label">الاحتمالية</label>
+          <select className="input" value={form.likelihood} onChange={(e) => update("likelihood", Number(e.target.value))}>
+            {likelihoodOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <FieldHelp>{likelihoodHelp}</FieldHelp>
         </div>
+
         <div>
-          <label className="label">التأثير 1 إلى 5</label>
-          <input className="input" type="number" min={1} max={5} value={form.impact} onChange={(e) => update("impact", Number(e.target.value))} />
+          <label className="label">التأثير</label>
+          <select className="input" value={form.impact} onChange={(e) => update("impact", Number(e.target.value))}>
+            {impactOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <FieldHelp>{impactHelp}</FieldHelp>
         </div>
+
         <div>
           <label className="label">مالك الخطر</label>
           <input className="input" value={form.owner} onChange={(e) => update("owner", e.target.value)} placeholder="مثال: مسؤول أمن المعلومات" />
         </div>
+
         <div>
           <label className="label">الحالة</label>
           <select className="input" value={form.status} onChange={(e) => update("status", e.target.value as RiskStatus)}>
-            <option>مفتوح</option>
-            <option>قيد المعالجة</option>
-            <option>مغلق</option>
+            {statusOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </select>
+          <FieldHelp>{statusHelp}</FieldHelp>
         </div>
+
         <div>
           <label className="label">استراتيجية المعالجة</label>
           <select className="input" value={form.treatment} onChange={(e) => update("treatment", e.target.value as RiskFormData["treatment"])}>
-            <option>تخفيف</option>
-            <option>قبول</option>
-            <option>نقل</option>
-            <option>تجنب</option>
+            {treatmentOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </select>
+          <FieldHelp>{treatmentHelp}</FieldHelp>
         </div>
+
         <div>
           <label className="label">وظيفة NIST CSF</label>
           <select className="input" value={form.csfFunction} onChange={(e) => update("csfFunction", e.target.value as RiskFormData["csfFunction"])}>
-            <option>Govern</option>
-            <option>Identify</option>
-            <option>Protect</option>
-            <option>Detect</option>
-            <option>Respond</option>
-            <option>Recover</option>
+            {csfFunctionOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </select>
+          <FieldHelp>{csfHelp}</FieldHelp>
         </div>
+
         <div>
           <label className="label">الضابط المقترح</label>
-          <input className="input" value={form.control} onChange={(e) => update("control", e.target.value)} placeholder="مثال: إدارة الهوية والمصادقة" />
+          <textarea
+            className="input min-h-20"
+            value={form.control}
+            onChange={(e) => update("control", e.target.value)}
+            placeholder="مثال: إدارة الهوية والمصادقة"
+          />
+          <FieldHelp>تم اقتراحه بناءً على التصنيف ويمكن تعديله حسب واقع الجهة.</FieldHelp>
         </div>
+
         <div>
           <label className="label">مرجع الإطار</label>
-          <input className="input" value={form.frameworkRef} onChange={(e) => update("frameworkRef", e.target.value)} placeholder="مثال: NIST SP 800-53: IA-2" />
+          <input className="input bg-slate-50 font-semibold text-slate-700" value={form.frameworkRef} readOnly />
+          <FieldHelp>
+            يتم توليد المرجع تلقائيًا من التصنيف. الضوابط المقترحة: {selectedCategory?.suggestedControls.join("، ") || "غير محدد"}.
+          </FieldHelp>
         </div>
+
         <div>
           <label className="label">تاريخ الاستحقاق</label>
           <input className="input" type="date" value={form.dueDate} onChange={(e) => update("dueDate", e.target.value)} />
@@ -273,9 +383,15 @@ export default function GrcDashboard() {
     return { total: risks.length, critical, high, open, closed, closureRate };
   }, [risks]);
 
-  const levelData = countBy<RiskLevel>(risks, "level");
-  const statusData = countBy<RiskStatus>(risks, "status");
-  const categoryData = countBy<string>(risks, "category");
+  const levelData = countRiskLevels(risks);
+  const statusData = countRiskStatuses(risks);
+  const categoryData = countCategories(risks);
+  const maxCategoryValue = Math.max(...categoryData.map((item) => item.value), 1);
+  const categoryChartData = categoryData.map((item) => ({
+    ...item,
+    color: getCategoryChartColor(item.name),
+    percentage: Math.max((item.value / maxCategoryValue) * 100, 10),
+  }));
   const topRisks = [...risks].sort((a, b) => b.score - a.score).slice(0, 5);
 
   function resetForm() {
@@ -376,31 +492,95 @@ export default function GrcDashboard() {
             <h2 className="mb-4 text-lg font-bold text-slate-950">المخاطر حسب المستوى</h2>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={levelData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis allowDecimals={false} />
-                  <Tooltip />
-                  <Bar dataKey="value" radius={[8, 8, 0, 0]}>
-                    {levelData.map((_, index) => <Cell key={index} fill={chartColors[index % chartColors.length]} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+  <BarChart
+    data={levelData}
+    margin={{ top: 10, right: 20, left: 35, bottom: 10 }}
+  >
+    <CartesianGrid strokeDasharray="3 3" />
+    <XAxis
+      dataKey="name"
+      tick={{ fontSize: 12, fill: "#475569" }}
+      tickMargin={10}
+    />
+    <YAxis
+      allowDecimals={false}
+      width={50}
+      tickMargin={14}
+      tick={{ fontSize: 13, fill: "#475569" }}
+    />
+    <Tooltip formatter={(value, name) => [value, name]} />
+    <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+      {levelData.map((entry) => (
+        <Cell key={entry.name} fill={getLevelChartColor(entry.name)} />
+      ))}
+    </Bar>
+  </BarChart>
+</ResponsiveContainer>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+              {riskLevelOrder.map((level) => (
+                <span key={level} className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-1">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: getLevelChartColor(level) }} />
+                  {level}
+                </span>
+              ))}
             </div>
           </div>
+
           <div className="card p-5">
             <h2 className="mb-4 text-lg font-bold text-slate-950">المخاطر حسب الحالة</h2>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={statusData} dataKey="value" nameKey="name" outerRadius={90} label>
-                    {statusData.map((_, index) => <Cell key={index} fill={chartColors[index % chartColors.length]} />)}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
+<PieChart margin={{ top: 20, right: 70, left: 70, bottom: 20 }}>    <Pie
+      data={statusData}
+      dataKey="value"
+      nameKey="name"
+      cx="50%"
+      cy="50%"
+      outerRadius={68}
+      labelLine={false}
+label={(props) => {        const { cx, cy, midAngle, outerRadius, name, value, fill } = props;
+        const RADIAN = Math.PI / 180;
+        const labelRadius = outerRadius + 32;
+        const x = cx + labelRadius * Math.cos(-midAngle * RADIAN);
+        const y = cy + labelRadius * Math.sin(-midAngle * RADIAN);
+
+        const isRightSide = x > cx;
+        const extraOffset = name === "مغلق" ? 20 : 12;
+
+        return (
+          <text
+            x={isRightSide ? x + extraOffset : x - extraOffset}
+            y={y}
+            fill={fill}
+            textAnchor={isRightSide ? "start" : "end"}
+            dominantBaseline="central"
+            fontSize={14}
+            fontWeight={700}
+          >
+            {`${name}: ${value}`}
+          </text>
+        );
+      }}
+    >
+      {statusData.map((entry) => (
+        <Cell key={entry.name} fill={getStatusChartColor(entry.name)} />
+      ))}
+    </Pie>
+    <Tooltip />
+  </PieChart>
+</ResponsiveContainer>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+              {statusOrder.map((status) => (
+                <span key={status} className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-1">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: getStatusChartColor(status) }} />
+                  {status}
+                </span>
+              ))}
             </div>
           </div>
+
           <div className="card p-5">
             <h2 className="mb-4 text-lg font-bold text-slate-950">أعلى 5 مخاطر</h2>
             <div className="space-y-3">
@@ -411,7 +591,7 @@ export default function GrcDashboard() {
                       <p className="font-bold text-slate-950">{risk.title}</p>
                       <p className="mt-1 text-xs text-slate-500">{risk.owner} — {risk.category}</p>
                     </div>
-                    <span className={`rounded-xl border px-2 py-1 text-xs font-bold ${getLevelBadgeClasses(risk.level)}`}>{risk.score}</span>
+                    <span className={`whitespace-nowrap rounded-xl border px-2 py-1 text-xs font-bold ${getLevelBadgeClasses(risk.level)}`}>{risk.score}</span>
                   </div>
                 </div>
               ))}
@@ -438,7 +618,7 @@ export default function GrcDashboard() {
           </div>
 
           <div className="mt-5 overflow-x-auto">
-            <table className="w-full min-w-[1100px] border-separate border-spacing-y-2 text-right text-sm">
+            <table className="w-full min-w-[1150px] border-separate border-spacing-y-2 text-right text-sm">
               <thead>
                 <tr className="text-xs font-bold text-slate-500">
                   <th className="px-3 py-2">المعرف</th>
@@ -464,14 +644,14 @@ export default function GrcDashboard() {
                     <td className="px-3 py-4 text-slate-600">{risk.category}</td>
                     <td className="px-3 py-4 font-black text-slate-950">{risk.score}</td>
                     <td className="px-3 py-4">
-                      <span className={`rounded-xl border px-2 py-1 text-xs font-bold ${getLevelBadgeClasses(risk.level)}`}>{risk.level}</span>
+                      <span className={`whitespace-nowrap rounded-xl border px-2 py-1 text-xs font-bold ${getLevelBadgeClasses(risk.level)}`}>{risk.level}</span>
                     </td>
                     <td className="px-3 py-4">
-                      <span className={`rounded-xl border px-2 py-1 text-xs font-bold ${getStatusBadgeClasses(risk.status)}`}>{risk.status}</span>
+                      <span className={`inline-flex min-w-24 items-center justify-center whitespace-nowrap rounded-xl border px-2 py-1 text-xs font-bold ${getStatusBadgeClasses(risk.status)}`}>{risk.status}</span>
                     </td>
                     <td className="px-3 py-4 text-slate-600">{risk.owner}</td>
                     <td className="px-3 py-4">
-                      <p className="font-semibold text-slate-800">{risk.control}</p>
+                      <p className="max-w-xs font-semibold text-slate-800">{risk.control}</p>
                       <p className="mt-1 text-xs text-slate-500">{risk.frameworkRef}</p>
                     </td>
                     <td className="px-3 py-4 text-slate-600">{risk.dueDate || "غير محدد"}</td>
@@ -499,20 +679,55 @@ export default function GrcDashboard() {
               يوجد حاليًا <strong>{metrics.total}</strong> مخاطر مسجلة، منها <strong>{metrics.critical}</strong> حرجة و <strong>{metrics.high}</strong> عالية. يوصى بالتركيز أولًا على المخاطر الحرجة، ثم المخاطر المرتبطة بالوصول والهوية، لأن أثرها غالبًا مباشر على سرية وسلامة الأنظمة.
             </p>
           </div>
-          <div className="card p-5">
-            <h2 className="text-lg font-bold text-slate-950">المخاطر حسب التصنيف</h2>
-            <div className="mt-4 h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={categoryData} layout="vertical" margin={{ left: 20, right: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis type="number" allowDecimals={false} />
-                  <YAxis type="category" dataKey="name" width={130} />
-                  <Tooltip />
-                  <Bar dataKey="value" radius={[8, 8, 8, 8]}>
-                    {categoryData.map((_, index) => <Cell key={index} fill={chartColors[index % chartColors.length]} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+          <div className="card overflow-hidden p-0">
+            <div className="border-b border-slate-100 p-5">
+              <h2 className="text-lg font-bold text-slate-950">المخاطر حسب التصنيف</h2>
+              <p className="mt-1 text-sm leading-6 text-slate-500">
+                يوضح هذا القسم توزيع المخاطر على المجالات الرئيسية. تم استخدام عرض مخصص بدل محور الرسم التقليدي حتى تظهر النصوص العربية بوضوح.
+              </p>
+            </div>
+
+            <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_260px]">
+              <div className="p-5">
+                <div className="space-y-4">
+                  {categoryChartData.map((item) => (
+                    <div key={item.name} className="grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)_44px] sm:items-center">
+                      <div className="text-sm font-bold text-slate-700 sm:text-right">{item.name}</div>
+                      <div className="h-9 rounded-2xl bg-slate-100 p-1">
+                        <div
+                          className="flex h-full items-center justify-end rounded-xl px-3 text-xs font-black text-white shadow-sm transition-all"
+                          style={{
+                            width: `${item.percentage}%`,
+                            backgroundColor: item.color,
+                          }}
+                        >
+                          {item.value}
+                        </div>
+                      </div>
+                      <div className="hidden text-center text-sm font-black text-slate-700 sm:block">{item.value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <aside className="border-t border-slate-100 bg-slate-50 p-5 xl:border-r xl:border-t-0">
+                <h3 className="text-base font-black text-slate-950">أعلى 5 تصنيفات</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  أعلى تصنيف يعني أن هذا المجال يتكرر فيه عدد أكبر من المخاطر، وقد يحتاج مراجعة سياسات أو ضوابط أو متابعة إدارية.
+                </p>
+
+                <div className="mt-5 space-y-3">
+                  {categoryChartData.slice(0, 5).map((item) => (
+                    <div key={item.name} className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 shadow-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
+                        <span className="text-xs font-bold text-slate-700">{item.name}</span>
+                      </div>
+                      <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-black text-slate-800">{item.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </aside>
             </div>
           </div>
         </section>
