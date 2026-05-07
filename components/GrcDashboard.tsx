@@ -388,23 +388,49 @@ export default function GrcDashboard() {
   const categoryData = countCategories(risks);
   const maxCategoryValue = Math.max(...categoryData.map((item) => item.value), 1);
   const categoryChartData = categoryData.map((item) => ({
-    ...item,
-    color: getCategoryChartColor(item.name),
-    percentage: Math.max((item.value / maxCategoryValue) * 100, 10),
-  }));
-  const topRisks = [...risks].sort((a, b) => b.score - a.score).slice(0, 5);
+  ...item,
+  color: getCategoryChartColor(item.name),
+  percentage: Math.max((item.value / maxCategoryValue) * 100, 10),
+}));
 
-  function resetForm() {
-    setForm(defaultForm);
-    setEditingRisk(null);
-    setShowForm(false);
-  }
+const topFiveCategoryData = categoryChartData
+  .map((category) => {
+    const categoryRisks = risks.filter((risk) => risk.category === category.name);
 
-  function submitRisk() {
-    if (!form.title.trim() || !form.description.trim() || !form.owner.trim()) {
-      alert("فضلاً أدخل عنوان الخطر، الوصف، ومالك الخطر على الأقل.");
-      return;
+    const totalScore = categoryRisks.reduce((sum, risk) => sum + risk.score, 0);
+
+    const highAndCriticalCount = categoryRisks.filter(
+      (risk) => risk.level === "عالي" || risk.level === "حرج"
+    ).length;
+
+    return {
+      ...category,
+      totalScore,
+      highAndCriticalCount,
+    };
+  })
+  .sort((a, b) => {
+    if (b.totalScore !== a.totalScore) {
+      return b.totalScore - a.totalScore;
     }
+
+    return b.value - a.value;
+  })
+  .slice(0, 5);
+
+const topRisks = [...risks].sort((a, b) => b.score - a.score).slice(0, 5);
+
+function resetForm() {
+  setForm(defaultForm);
+  setEditingRisk(null);
+  setShowForm(false);
+}
+
+function submitRisk() {
+  if (!form.title.trim() || !form.description.trim() || !form.owner.trim()) {
+    alert("فضلاً أدخل عنوان الخطر، الوصف، ومالك الخطر على الأقل.");
+    return;
+  }
 
     const risk = buildRisk(form, editingRisk || undefined);
 
@@ -711,13 +737,12 @@ label={(props) => {        const { cx, cy, midAngle, outerRadius, name, value, f
               </div>
 
               <aside className="border-t border-slate-100 bg-slate-50 p-5 xl:border-r xl:border-t-0">
-                <h3 className="text-base font-black text-slate-950">أعلى 5 تصنيفات</h3>
+                <h3 className="text-base font-black text-slate-950">أعلى 5 تصنيفات حسب الخطورة</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  أعلى تصنيف يعني أن هذا المجال يتكرر فيه عدد أكبر من المخاطر، وقد يحتاج مراجعة سياسات أو ضوابط أو متابعة إدارية.
-                </p>
+يعرض هذا القسم أكثر التصنيفات خطورة بناءً على مجموع درجات المخاطر داخل كل تصنيف، وليس عدد المخاطر فقط. </p>
 
                 <div className="mt-5 space-y-3">
-                  {categoryChartData.slice(0, 5).map((item) => (
+                  {topFiveCategoryData.map((item) => (
                     <div key={item.name} className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 shadow-sm">
                       <div className="flex items-center gap-2">
                         <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
