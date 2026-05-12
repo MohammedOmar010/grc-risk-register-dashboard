@@ -4,6 +4,7 @@ export type RiskTreatment = "تخفيف" | "قبول" | "نقل" | "تجنب";
 export type CsfFunction = "Govern" | "Identify" | "Protect" | "Detect" | "Respond" | "Recover";
 
 export type Risk = {
+  databaseId?: string;
   id: string;
   title: string;
   description: string;

@@ -17,6 +17,7 @@ import { AlertTriangle, CheckCircle2, Clock, FileText, Plus, ShieldCheck, Trash2
 import type { Risk, RiskFormData, RiskLevel, RiskStatus } from "@/types/risk";
 import { calculateRiskScore, getLevelBadgeClasses, getRiskLevel, getStatusBadgeClasses } from "@/lib/risk-calculation";
 import { sampleRisks } from "@/lib/sample-data";
+import { createRiskRecord, deleteRiskRecord, getRisks, replaceRisksWithSamples, updateRiskRecord } from "@/lib/risk-service";
 import {
   buildFrameworkReference,
   csfFunctionOptions,
@@ -26,8 +27,6 @@ import {
   statusOptions,
   treatmentOptions,
 } from "@/lib/risk-options";
-
-const storageKey = "grc-risk-register-v1";
 
 const defaultCategory = riskCategoryOptions[0];
 
@@ -122,6 +121,7 @@ function buildRisk(form: RiskFormData, previous?: Risk): Risk {
 
   return {
     ...form,
+    databaseId: previous?.databaseId,
     id: previous?.id || `R-${Math.floor(Math.random() * 9000 + 1000)}`,
     score,
     level: getRiskLevel(score),
@@ -162,7 +162,7 @@ function RiskForm({
 }: {
   form: RiskFormData;
   setForm: (form: RiskFormData) => void;
-  onSubmit: () => void;
+  onSubmit: () => void | Promise<void>;
   onCancel: () => void;
   editingRisk?: Risk | null;
 }) {
@@ -343,27 +343,54 @@ function RiskForm({
 }
 
 export default function GrcDashboard() {
-  const [risks, setRisks] = useState<Risk[]>(sampleRisks);
+  const [risks, setRisks] = useState<Risk[]>([]);
   const [form, setForm] = useState<RiskFormData>(defaultForm);
   const [editingRisk, setEditingRisk] = useState<Risk | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [query, setQuery] = useState("");
   const [levelFilter, setLevelFilter] = useState("الكل");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [databaseError, setDatabaseError] = useState<string | null>(null);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(storageKey);
-    if (saved) {
+    let isMounted = true;
+
+    async function loadRisks() {
       try {
-        setRisks(JSON.parse(saved) as Risk[]);
-      } catch {
-        setRisks(sampleRisks);
+        setDatabaseError(null);
+        const databaseRisks = await getRisks();
+
+        if (!isMounted) return;
+
+        if (databaseRisks.length > 0) {
+          setRisks(databaseRisks);
+          return;
+        }
+
+        const seededRisks = await replaceRisksWithSamples(sampleRisks);
+        if (isMounted) {
+          setRisks(seededRisks);
+        }
+      } catch (error) {
+        console.error(error);
+        if (isMounted) {
+          setDatabaseError("تعذر تحميل البيانات من Supabase. تأكد من إعداد ملف .env.local وسياسات RLS.");
+          setRisks(sampleRisks);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     }
-  }, []);
 
-  useEffect(() => {
-    window.localStorage.setItem(storageKey, JSON.stringify(risks));
-  }, [risks]);
+    loadRisks();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const filteredRisks = useMemo(() => {
     return risks.filter((risk) => {
@@ -426,22 +453,32 @@ function resetForm() {
   setShowForm(false);
 }
 
-function submitRisk() {
+async function submitRisk() {
   if (!form.title.trim() || !form.description.trim() || !form.owner.trim()) {
     alert("فضلاً أدخل عنوان الخطر، الوصف، ومالك الخطر على الأقل.");
     return;
   }
 
+  try {
+    setIsSaving(true);
+    setDatabaseError(null);
     const risk = buildRisk(form, editingRisk || undefined);
+    const savedRisk = editingRisk ? await updateRiskRecord(risk) : await createRiskRecord(risk);
 
     if (editingRisk) {
-      setRisks(risks.map((item) => (item.id === editingRisk.id ? risk : item)));
+      setRisks(risks.map((item) => (item.databaseId === savedRisk.databaseId || item.id === savedRisk.id ? savedRisk : item)));
     } else {
-      setRisks([risk, ...risks]);
+      setRisks([savedRisk, ...risks]);
     }
 
     resetForm();
+  } catch (error) {
+    console.error(error);
+    setDatabaseError("تعذر حفظ الخطر في قاعدة البيانات. تحقق من اتصال Supabase وسياسات RLS.");
+  } finally {
+    setIsSaving(false);
   }
+}
 
   function editRisk(risk: Risk) {
     setEditingRisk(risk);
@@ -468,16 +505,35 @@ function submitRisk() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function deleteRisk(id: string) {
+  async function deleteRisk(risk: Risk) {
     const confirmed = confirm("هل تريد حذف هذا الخطر؟");
     if (!confirmed) return;
-    setRisks(risks.filter((risk) => risk.id !== id));
+
+    try {
+      setDatabaseError(null);
+      await deleteRiskRecord(risk);
+      setRisks(risks.filter((item) => item.databaseId !== risk.databaseId && item.id !== risk.id));
+    } catch (error) {
+      console.error(error);
+      setDatabaseError("تعذر حذف الخطر من قاعدة البيانات.");
+    }
   }
 
-  function resetToSamples() {
-    const confirmed = confirm("سيتم استبدال البيانات الحالية بالبيانات التجريبية. هل تريد المتابعة؟");
+  async function resetToSamples() {
+    const confirmed = confirm("سيتم استبدال البيانات الحالية بالبيانات التجريبية في Supabase. هل تريد المتابعة؟");
     if (!confirmed) return;
-    setRisks(sampleRisks);
+
+    try {
+      setIsSaving(true);
+      setDatabaseError(null);
+      const seededRisks = await replaceRisksWithSamples(sampleRisks);
+      setRisks(seededRisks);
+    } catch (error) {
+      console.error(error);
+      setDatabaseError("تعذر استعادة البيانات التجريبية في Supabase.");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -493,15 +549,27 @@ function submitRisk() {
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
-              <button className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-slate-950 hover:bg-slate-100" onClick={() => setShowForm(true)}>
+              <button className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-slate-950 hover:bg-slate-100" disabled={isSaving} onClick={() => setShowForm(true)}>
                 <Plus className="ml-2 inline h-4 w-4" /> إضافة خطر
               </button>
-              <button className="rounded-xl border border-white/20 px-4 py-2 text-sm font-bold text-white hover:bg-white/10" onClick={resetToSamples}>
-                استعادة البيانات التجريبية
+              <button className="rounded-xl border border-white/20 px-4 py-2 text-sm font-bold text-white hover:bg-white/10" disabled={isSaving} onClick={resetToSamples}>
+                {isSaving ? "جاري الحفظ..." : "استعادة البيانات التجريبية"}
               </button>
             </div>
           </div>
         </header>
+
+        {databaseError && (
+          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold leading-7 text-red-700">
+            {databaseError}
+          </div>
+        )}
+
+        {isLoading ? (
+          <section className="card p-6 text-center text-sm font-bold text-slate-600">
+            جاري تحميل بيانات المخاطر من قاعدة البيانات...
+          </section>
+        ) : null}
 
         {showForm && <RiskForm form={form} setForm={setForm} onSubmit={submitRisk} onCancel={resetForm} editingRisk={editingRisk} />}
 
@@ -629,7 +697,7 @@ label={(props) => {        const { cx, cy, midAngle, outerRadius, name, value, f
           <div className="flex flex-col gap-4 border-b border-slate-100 pb-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-xl font-bold text-slate-950">سجل المخاطر</h2>
-              <p className="mt-1 text-sm text-slate-500">يمكن البحث، التصفية، التعديل، والحذف. هذه البيانات محفوظة مؤقتًا في المتصفح.</p>
+              <p className="mt-1 text-sm text-slate-500">يمكن البحث، التصفية، التعديل، والحذف. هذه البيانات محفوظة الآن في قاعدة بيانات Supabase.</p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
               <input className="input sm:w-72" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="بحث باسم الخطر أو المسؤول..." />
@@ -686,7 +754,7 @@ label={(props) => {        const { cx, cy, midAngle, outerRadius, name, value, f
                         <button className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold hover:bg-slate-50" onClick={() => editRisk(risk)}>
                           تعديل
                         </button>
-                        <button className="rounded-xl border border-red-200 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-50" onClick={() => deleteRisk(risk.id)}>
+                        <button className="rounded-xl border border-red-200 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-50" onClick={() => deleteRisk(risk)}>
                           <Trash2 className="inline h-4 w-4" />
                         </button>
                       </div>
@@ -748,7 +816,7 @@ label={(props) => {        const { cx, cy, midAngle, outerRadius, name, value, f
                         <span className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
                         <span className="text-xs font-bold text-slate-700">{item.name}</span>
                       </div>
-                      <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-black text-slate-800">{item.value}</span>
+                      <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-black text-slate-800">{item.totalScore}</span>
                     </div>
                   ))}
                 </div>
@@ -761,7 +829,7 @@ label={(props) => {        const { cx, cy, midAngle, outerRadius, name, value, f
           <div className="flex items-start gap-3">
             <X className="mt-1 hidden h-4 w-4 text-slate-400 sm:block" />
             <p>
-              ملاحظة: هذه نسخة MVP تعليمية وعملية. التصنيفات والضوابط هنا مبنية كنموذج مبسط للتعلم والعرض المهني، وليست بديلاً عن تقييم رسمي كامل أو اعتماد جهة مختصة. المرحلة التالية هي ربط Supabase وإضافة الصلاحيات والتقارير القابلة للتصدير.
+              ملاحظة: هذه نسخة MVP تعليمية وعملية. التصنيفات والضوابط هنا مبنية كنموذج مبسط للتعلم والعرض المهني، وليست بديلاً عن تقييم رسمي كامل أو اعتماد جهة مختصة. تم ربط البيانات بقاعدة Supabase كمرحلة ثانية، والمرحلة القادمة هي إضافة تسجيل الدخول، الصلاحيات، والتقارير القابلة للتصدير.
             </p>
           </div>
         </footer>
