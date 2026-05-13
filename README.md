@@ -49,10 +49,4 @@ This project uses selected concepts and references from:
 
 > Note: This project does not claim full compliance with NIST frameworks. It uses selected references for educational and portfolio purposes.
 
-## Environment Variables
 
-Create a `.env.local` file in the project root:
-
-```env
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_or_publishable_key
