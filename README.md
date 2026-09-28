@@ -1,52 +1,91 @@
-# GRC Risk Register & Dashboard
+# Cybersecurity GRC Risk Management — MVP V2.4
 
-Arabic web-based GRC Risk Management dashboard for identifying, assessing, classifying, and monitoring cybersecurity and IT risks.
+English management-facing risk submission and Cybersecurity GRC assessment platform.
 
-## Overview
+## V2 workflow
 
-This project is a practical GRC-focused web application designed to support cybersecurity and IT risk management. It allows users to document risks, assess likelihood and impact, calculate risk scores, track mitigation plans, assign ownership, and visualize risk exposure through interactive dashboards.
+**Director / Manager** submits only business context:
+- Department (from user profile in the production design)
+- Scope / Asset / Service
+- Concern title and description
+- Potential business impact
+- Business consequence summary
 
-The project was built as a portfolio MVP to demonstrate practical understanding of Governance, Risk, and Compliance (GRC), risk assessment, control mapping, and executive risk reporting.
+**Cybersecurity GRC** performs the formal assessment:
+- Risk statement and category
+- Likelihood and impact
+- Inherent risk score
+- Risk owner
+- Applicable framework and control reference
+- Recommended controls
+- Treatment option and mitigation plan
+- Communication date
+- Due date and implementation status
+- Residual likelihood / impact after treatment implementation
+- Closure / verification
 
-## Key Features
+## Saudi regulatory focus
 
-- Structured Risk Register for cybersecurity and IT risks
-- Automated risk scoring using Likelihood × Impact
-- Risk level classification: Low, Medium, High, Critical
-- Risk ownership and mitigation tracking
-- Risk treatment status monitoring
-- NIST CSF 2.0 function mapping
-- Selected NIST SP 800-53 control references
-- Interactive dashboards for:
-  - Risk levels
-  - Risk status
-  - Risk categories
-  - Top risks
-  - Executive summary indicators
-- Arabic RTL interface
-- Supabase database integration for persistent data storage
+- **NCA ECC 2-2024** is the primary framework option in the MVP.
+- **CST CRF** is optional and should only be selected where CST regulatory scope applies.
+- The application intentionally removes NIST CSF / NIST SP 800-53 mapping from the operational form.
+- Exact regulatory control mapping is validated by Cybersecurity GRC against the organization's approved applicability / compliance matrix; the MVP does not invent automatic control IDs.
 
-## Tech Stack
+## Default MVP risk methodology
 
-- Next.js
-- React
-- TypeScript
-- Tailwind CSS
-- Recharts
-- Supabase
-- Git & GitHub
-- Vercel
+The application contains a configurable 1–5 semi-quantitative likelihood and impact scale for demonstration.
+It is **not presented as an NCA-mandated scoring formula**. A real organization should replace the default criteria with its formally approved Cybersecurity Risk Management Methodology, risk appetite, criticality criteria, and approval matrix.
 
-## GRC and Security References
+## Access model
 
-This project uses selected concepts and references from:
+The UI includes an **MVP Role Preview**:
+- Cybersecurity GRC: enterprise portfolio and assessment actions
+- Director / Manager: department-only view and risk-concern submission
 
-- NIST Cybersecurity Framework (CSF) 2.0
-- NIST SP 800-53 Rev. 5
-- Risk scoring based on likelihood and impact
-- Risk treatment and mitigation tracking
-- Controls mapping for cybersecurity and IT risk management
+For real privacy enforcement, use Supabase Auth and run the included `supabase-v2-auth-rls.sql` policies. UI filtering alone is not a security control.
 
-> Note: This project does not claim full compliance with NIST frameworks. It uses selected references for educational and portfolio purposes.
+## Supabase migration
+
+1. Back up your current Supabase project.
+2. Run `supabase-v2-schema.sql` in Supabase SQL Editor.
+3. Keep the existing demo CRUD policies while testing the public MVP.
+4. When Supabase Auth is implemented, review and run `supabase-v2-auth-rls.sql` to enforce department segregation and GRC-only audit access.
+5. Add the existing environment variables to `.env.local` and Vercel:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+
+## Tech stack
+
+Next.js · React · TypeScript · Tailwind CSS · Recharts · Supabase · GitHub · Vercel
 
 
+## Fast MVP testing
+
+Management submission fields provide suggested options while still allowing custom wording. Cybersecurity GRC assessment fields use the same quick-selection pattern where it improves consistency without forcing an inaccurate value.
+
+If Supabase environment variables are missing, the UI opens safely in local demo mode instead of throwing a development-console error. Configure `.env.local` from `.env.example` when database persistence is required.
+
+## Dependency security
+
+This revision pins Next.js / eslint-config-next to `15.5.25` and intentionally removes the previous lock file so `npm install` can generate a fresh patched dependency tree. See `SECURITY_UPDATE.md`.
+
+
+## V2.3 guided-assessment improvements
+
+- Suggested long-text fields now show **one selector only**. The custom text area appears **only** when `Other / Custom` is selected (or when an existing saved value is already custom).
+- GRC Question 1 (formal risk statement) recommends the matching risk category and prepares related control/treatment suggestions.
+- Changing the risk category refreshes the recommended control actions and mitigation-plan suggestions.
+- Selecting the regulatory framework filters the control-reference guidance shown in the next field.
+- Selecting a recommended control prepares a related mitigation-plan suggestion while keeping all fields editable.
+- The previous generic likelihood-guidance box was replaced by clear 1–5 likelihood and impact criteria that can be expanded when needed.
+- The rating criteria are explicitly labeled as **MVP default guidance**, not an NCA/CST scoring formula.
+
+
+## V2.4 GRC capture & audit navigation
+
+- Cybersecurity GRC can now create a risk directly using **Add Risk** for concerns identified through monitoring, email, calls, meetings, or informal escalation.
+- GRC selects the owning / affected department during capture; Director / Manager submissions remain department-scoped.
+- Risks created directly by GRC start at **Under GRC Review** and open immediately in the formal GRC assessment workflow.
+- **Open Audit Log** now reveals the audit section and scrolls directly to it, avoiding ambiguous button behavior.
+- Audit Log was redesigned with event counters, event-type badges, actor / department context, and an **Open Risk** action for traceability.
+- The MVP audit view is still metadata-derived; the production target remains an append-only authenticated audit service / RLS-protected table.
