@@ -89,3 +89,11 @@ This revision pins Next.js / eslint-config-next to `15.5.25` and intentionally r
 - **Open Audit Log** now reveals the audit section and scrolls directly to it, avoiding ambiguous button behavior.
 - Audit Log was redesigned with event counters, event-type badges, actor / department context, and an **Open Risk** action for traceability.
 - The MVP audit view is still metadata-derived; the production target remains an append-only authenticated audit service / RLS-protected table.
+
+## V2.5 executive dashboard and validation update
+
+- Executive KPI set: Total Risks, Critical, High, Within Plan, Overdue Plans, No Plan.
+- Click any KPI / severity / workflow status / department chart item to filter the Risk Register.
+- Closed risks are retained in Workflow Status reporting rather than occupying a top action KPI.
+- Guided management questions are mandatory and return the user to the first missing answer before submission.
+- GRC assessment validation is workflow-aware: treatment and residual fields become required only when the record reaches those stages.

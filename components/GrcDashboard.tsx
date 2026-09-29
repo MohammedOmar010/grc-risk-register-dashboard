@@ -102,6 +102,19 @@ const emptySubmission = (department: Department): SubmissionFormData => ({
 function nowIso() {
   return new Date().toISOString();
 }
+function todayIsoDate() {
+  const d = new Date();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${month}-${day}`;
+}
+
+function getPlanState(risk: Risk, today: string) {
+  if (risk.status === "Closed") return "Closed";
+  if (!risk.mitigationPlan.trim() || !risk.dueDate) return "No Plan";
+  if (risk.dueDate < today) return "Overdue";
+  return "Within Plan";
+}
 function dateOnly(value: string) {
   return value ? new Date(value).toLocaleDateString("en-GB") : "—";
 }
@@ -368,23 +381,34 @@ function MetricCard({
   value,
   helper,
   icon,
+  onClick,
+  active = false,
 }: {
   title: string;
   value: string | number;
   helper: string;
   icon: React.ReactNode;
+  onClick?: () => void;
+  active?: boolean;
 }) {
-  return (
-    <div className="card p-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-semibold text-slate-500">{title}</p>
-          <p className="mt-2 text-3xl font-bold text-slate-950">{value}</p>
-          <p className="mt-2 text-xs text-slate-500">{helper}</p>
-        </div>
-        <div className="rounded-2xl bg-slate-100 p-3 text-slate-800">{icon}</div>
+  const classes = `card p-5 text-left transition ${onClick ? "cursor-pointer hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-slate-400" : ""} ${active ? "ring-2 ring-slate-900" : ""}`;
+  const content = (
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <p className="text-sm font-semibold text-slate-500">{title}</p>
+        <p className="mt-2 text-3xl font-bold text-slate-950">{value}</p>
+        <p className="mt-2 text-xs text-slate-500">{helper}</p>
       </div>
+      <div className="rounded-2xl bg-slate-100 p-3 text-slate-800">{icon}</div>
     </div>
+  );
+
+  return onClick ? (
+    <button type="button" className={classes} onClick={onClick} aria-pressed={active}>
+      {content}
+    </button>
+  ) : (
+    <div className={classes}>{content}</div>
   );
 }
 
@@ -399,6 +423,9 @@ function SuggestedTextarea({
   onChange,
   placeholder,
   help,
+  required = false,
+  error,
+  containerRef,
 }: {
   label: string;
   value: string;
@@ -406,6 +433,9 @@ function SuggestedTextarea({
   onChange: (value: string) => void;
   placeholder?: string;
   help?: React.ReactNode;
+  required?: boolean;
+  error?: string;
+  containerRef?: React.Ref<HTMLDivElement>;
 }) {
   const known = options.includes(value);
   const [customMode, setCustomMode] = useState(Boolean(value && !known));
@@ -418,10 +448,11 @@ function SuggestedTextarea({
   const selectValue = customMode ? OTHER_OPTION : known ? value : "";
 
   return (
-    <div>
-      <label className="label">{label}</label>
+    <div ref={containerRef}>
+      <label className="label">{label}{required ? <span className="ml-1 text-red-600" aria-hidden="true">*</span> : null}</label>
       <select
-        className="input"
+        className={`input ${error ? "border-red-400 ring-1 ring-red-200" : ""}`}
+        aria-invalid={Boolean(error)}
         value={selectValue}
         onChange={(e) => {
           const selected = e.target.value;
@@ -440,13 +471,14 @@ function SuggestedTextarea({
       </select>
       {customMode ? (
         <textarea
-          className="input mt-2 min-h-20"
+          className={`input mt-2 min-h-20 ${error ? "border-red-400 ring-1 ring-red-200" : ""}`}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder || "Type the custom answer"}
           autoFocus
         />
       ) : null}
+      {error ? <p className="mt-1 text-xs font-semibold text-red-600">{error}</p> : null}
       {help ? <Help>{help}</Help> : null}
     </div>
   );
@@ -459,6 +491,9 @@ function ClearChoiceField({
   onChange,
   help,
   customPlaceholder = "Type a custom answer",
+  required = false,
+  error,
+  containerRef,
 }: {
   label: string;
   value: string;
@@ -466,16 +501,20 @@ function ClearChoiceField({
   onChange: (value: string) => void;
   help?: React.ReactNode;
   customPlaceholder?: string;
+  required?: boolean;
+  error?: string;
+  containerRef?: React.Ref<HTMLDivElement>;
 }) {
   const known = options.includes(value);
   const [customMode, setCustomMode] = useState(Boolean(value && !known));
   const selectValue = customMode ? OTHER_OPTION : known ? value : "";
 
   return (
-    <div>
-      <label className="label">{label}</label>
+    <div ref={containerRef}>
+      <label className="label">{label}{required ? <span className="ml-1 text-red-600" aria-hidden="true">*</span> : null}</label>
       <select
-        className="input"
+        className={`input ${error ? "border-red-400 ring-1 ring-red-200" : ""}`}
+        aria-invalid={Boolean(error)}
         value={selectValue}
         onChange={(e) => {
           const selected = e.target.value;
@@ -494,13 +533,14 @@ function ClearChoiceField({
       </select>
       {customMode ? (
         <input
-          className="input mt-2"
+          className={`input mt-2 ${error ? "border-red-400 ring-1 ring-red-200" : ""}`}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={customPlaceholder}
           autoFocus
         />
       ) : null}
+      {error ? <p className="mt-1 text-xs font-semibold text-red-600">{error}</p> : null}
       {help ? <Help>{help}</Help> : null}
     </div>
   );
@@ -521,6 +561,8 @@ function SubmissionForm({
   const [form, setForm] = useState<SubmissionFormData>(emptySubmission(department));
   const [saving, setSaving] = useState(false);
   const [otherImpact, setOtherImpact] = useState("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const fieldRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const presets = concernPresetsByDepartment[selectedDepartment];
   const selectedPreset = presets.find((item) => item.label === form.title);
 
@@ -534,14 +576,37 @@ function SubmissionForm({
     setSelectedDepartment(nextDepartment);
     setForm(emptySubmission(nextDepartment));
     setOtherImpact("");
+    setErrors({});
+  }
+
+  function clearError(key: string) {
+    setErrors((current) => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function focusFirstInvalid(nextErrors: Record<string, string>, order: string[]) {
+    const first = order.find((key) => nextErrors[key]);
+    if (!first) return;
+    window.setTimeout(() => {
+      const container = fieldRefs.current[first];
+      container?.scrollIntoView({ behavior: "smooth", block: "center" });
+      const control = container?.querySelector("select, input, textarea, button") as HTMLElement | null;
+      window.setTimeout(() => control?.focus({ preventScroll: true }), 250);
+    }, 50);
   }
 
   function applyIssueChoice(title: string) {
+    clearError("title");
     const preset = presets.find((item) => item.label === title);
     if (!preset) {
       setForm((current) => ({ ...current, title }));
       return;
     }
+    ["scopeAsset", "description", "businessImpactTypes", "businessImpactSummary"].forEach(clearError);
     setForm((current) => ({
       ...current,
       title: preset.label,
@@ -554,6 +619,7 @@ function SubmissionForm({
   }
 
   function toggleImpact(value: string) {
+    clearError("businessImpactTypes");
     const next = form.businessImpactTypes.includes(value)
       ? form.businessImpactTypes.filter((x) => x !== value)
       : [...form.businessImpactTypes, value];
@@ -565,11 +631,20 @@ function SubmissionForm({
       .filter((item) => item !== "Other")
       .concat(form.businessImpactTypes.includes("Other") && otherImpact.trim() ? [otherImpact.trim()] : []);
 
-    if (!form.scopeAsset.trim() || !form.title.trim() || !form.description.trim() || finalImpacts.length === 0 || !form.businessImpactSummary.trim()) {
-      alert("Please complete all five guided questions and select at least one business impact.");
+    const nextErrors: Record<string, string> = {};
+    if (!form.scopeAsset.trim()) nextErrors.scopeAsset = "Select the affected area, asset, or service.";
+    if (!form.title.trim()) nextErrors.title = "Select or enter the issue that was observed.";
+    if (!form.description.trim()) nextErrors.description = "Describe what was observed.";
+    if (finalImpacts.length === 0) nextErrors.businessImpactTypes = form.businessImpactTypes.includes("Other") ? "Describe the Other business impact." : "Select at least one business impact.";
+    if (!form.businessImpactSummary.trim()) nextErrors.businessImpactSummary = "Select or enter the most realistic business consequence.";
+
+    if (Object.keys(nextErrors).length) {
+      setErrors(nextErrors);
+      focusFirstInvalid(nextErrors, ["scopeAsset", "title", "description", "businessImpactTypes", "businessImpactSummary"]);
       return;
     }
 
+    setErrors({});
     setSaving(true);
     await onSubmit({
       ...form,
@@ -604,6 +679,7 @@ function SubmissionForm({
           <><strong>Your role:</strong> describe the business concern and possible consequence. <strong>Cybersecurity GRC</strong> will perform the formal likelihood, impact, control, and treatment assessment.</>
         )}
       </div>
+      <p className="mt-3 text-xs font-semibold text-slate-500"><span className="text-red-600">*</span> Required before the concern can be submitted.</p>
 
       <div className="mt-5 grid gap-5 md:grid-cols-2">
         <div>
@@ -622,7 +698,10 @@ function SubmissionForm({
           label="1. Which area, asset, or service is affected?"
           value={form.scopeAsset}
           options={scopeAssetOptionsByDepartment[selectedDepartment]}
-          onChange={(scopeAsset) => setForm({ ...form, scopeAsset })}
+          onChange={(scopeAsset) => { clearError("scopeAsset"); setForm({ ...form, scopeAsset }); }}
+          required
+          error={errors.scopeAsset}
+          containerRef={(el) => { fieldRefs.current.scopeAsset = el; }}
           customPlaceholder="Example: Customer mobile application"
           help="Choose the closest business area. Use Other / Custom only when none of the listed options fits."
         />
@@ -633,6 +712,9 @@ function SubmissionForm({
             value={form.title}
             options={presets.map((item) => item.label)}
             onChange={applyIssueChoice}
+            required
+            error={errors.title}
+            containerRef={(el) => { fieldRefs.current.title = el; }}
             customPlaceholder="Write a short issue title in plain business language"
             help="Choosing a suggested issue pre-fills the remaining answers so the submission stays logically consistent. You can still adjust them."
           />
@@ -643,14 +725,17 @@ function SubmissionForm({
             label="3. What did you observe?"
             value={form.description}
             options={descriptionChoices}
-            onChange={(description) => setForm({ ...form, description })}
+            onChange={(description) => { clearError("description"); setForm({ ...form, description }); }}
+            required
+            error={errors.description}
+            containerRef={(el) => { fieldRefs.current.description = el; }}
             placeholder="Describe the condition you observed without trying to calculate the risk."
             help="Describe the current condition only. Avoid proposing controls or assigning a risk score here."
           />
         </div>
 
-        <div className="md:col-span-2">
-          <label className="label">4. What business areas could be affected?</label>
+        <div className="md:col-span-2" ref={(el) => { fieldRefs.current.businessImpactTypes = el; }}>
+          <label className="label">4. What business areas could be affected?<span className="ml-1 text-red-600" aria-hidden="true">*</span></label>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {businessImpactOptions.map((item) => (
               <label key={item} className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 p-3 text-sm font-medium hover:bg-slate-50">
@@ -660,8 +745,9 @@ function SubmissionForm({
             ))}
           </div>
           {form.businessImpactTypes.includes("Other") ? (
-            <input className="input mt-2" value={otherImpact} onChange={(e) => setOtherImpact(e.target.value)} placeholder="Describe the other business impact" />
+            <input className={`input mt-2 ${errors.businessImpactTypes ? "border-red-400 ring-1 ring-red-200" : ""}`} value={otherImpact} onChange={(e) => { clearError("businessImpactTypes"); setOtherImpact(e.target.value); }} placeholder="Describe the other business impact" aria-invalid={Boolean(errors.businessImpactTypes)} />
           ) : null}
+          {errors.businessImpactTypes ? <p className="mt-1 text-xs font-semibold text-red-600">{errors.businessImpactTypes}</p> : null}
           <Help>Select the business consequences you understand. Cybersecurity GRC will determine the formal Impact rating.</Help>
         </div>
 
@@ -670,7 +756,10 @@ function SubmissionForm({
             label="5. What could happen if the issue is not addressed?"
             value={form.businessImpactSummary}
             options={consequenceChoices}
-            onChange={(businessImpactSummary) => setForm({ ...form, businessImpactSummary })}
+            onChange={(businessImpactSummary) => { clearError("businessImpactSummary"); setForm({ ...form, businessImpactSummary }); }}
+            required
+            error={errors.businessImpactSummary}
+            containerRef={(el) => { fieldRefs.current.businessImpactSummary = el; }}
             placeholder="Select the most realistic consequence, then adjust the wording if needed."
             help="Focus on the business outcome, such as service disruption, financial loss, data exposure, or non-compliance."
           />
@@ -715,6 +804,8 @@ function GrcAssessment({
     residualImpact: risk.residualImpact,
     status: risk.status,
   });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const fieldRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const contextual = getAssessmentSuggestions(risk);
   const contextualStatements = contextual.statements;
@@ -725,7 +816,28 @@ function GrcAssessment({
   const ownerChoices = riskOwnerSuggestionsByDepartment[risk.department];
   const controlReferenceChoices = frameworkControlReferenceOptions[form.framework];
 
+  function clearAssessmentError(key: string) {
+    setErrors((current) => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function focusAssessmentError(nextErrors: Record<string, string>, order: string[]) {
+    const first = order.find((key) => nextErrors[key]);
+    if (!first) return;
+    window.setTimeout(() => {
+      const container = fieldRefs.current[first];
+      container?.scrollIntoView({ behavior: "smooth", block: "center" });
+      const control = container?.querySelector("select, input, textarea, button") as HTMLElement | null;
+      window.setTimeout(() => control?.focus({ preventScroll: true }), 250);
+    }, 50);
+  }
+
   function applyRiskStatement(riskStatement: string) {
+    clearAssessmentError("riskStatement");
     if (!contextualStatements.includes(riskStatement)) {
       setForm((current) => ({ ...current, riskStatement }));
       return;
@@ -749,6 +861,7 @@ function GrcAssessment({
   }
 
   function applyCategory(category: string) {
+    clearAssessmentError("category");
     if (!riskCategoryOptions.includes(category)) {
       setForm((current) => ({ ...current, category }));
       return;
@@ -764,6 +877,7 @@ function GrcAssessment({
   }
 
   function applyFramework(framework: GrcAssessmentFormData["framework"]) {
+    clearAssessmentError("framework");
     setForm((current) => ({
       ...current,
       framework,
@@ -772,6 +886,7 @@ function GrcAssessment({
   }
 
   function applyControlAction(recommendedControls: string) {
+    clearAssessmentError("recommendedControls");
     if (!contextualControls.includes(recommendedControls)) {
       setForm((current) => ({ ...current, recommendedControls }));
       return;
@@ -790,8 +905,45 @@ function GrcAssessment({
   const residualLevel = getRiskLevel(residualScore);
   const residualAllowed = ["Implemented", "Verified"].includes(form.implementationStatus);
 
-  async function save() {
-    await onSave({
+  const assessmentCompletedOrLater = ["Assessment Completed", "Treatment Assigned", "In Progress", "Pending GRC Verification", "Closed"].includes(form.status);
+  const treatmentStage = ["Treatment Assigned", "In Progress", "Pending GRC Verification", "Closed"].includes(form.status);
+
+  function validateAssessment() {
+    const nextErrors: Record<string, string> = {};
+    if (!form.riskStatement.trim()) nextErrors.riskStatement = "Select or enter the formal risk statement.";
+    if (!form.category.trim()) nextErrors.category = "Select or enter the risk category.";
+    if (!form.owner.trim()) nextErrors.owner = "Select or enter the accountable risk owner.";
+    if (form.likelihood === null) nextErrors.likelihood = "Select the likelihood rating using the criteria below.";
+    if (form.impact === null) nextErrors.impact = "Select the impact rating using the criteria below.";
+    if (!form.framework) nextErrors.framework = "Select the applicable framework status.";
+    if (assessmentCompletedOrLater && form.framework === "Not Determined") nextErrors.framework = "Determine the applicable framework before marking the assessment completed.";
+
+    if (treatmentStage) {
+      if (!form.treatment) nextErrors.treatment = "Select the treatment decision before assigning treatment.";
+      if (!form.dueDate) nextErrors.dueDate = "Set a due date for the treatment or follow-up action.";
+      if (!form.mitigationPlan.trim()) nextErrors.mitigationPlan = "Select or enter the exact treatment action / justification.";
+      if (form.treatment === "Mitigation" && !form.recommendedControls.trim()) nextErrors.recommendedControls = "Select or enter the control action that will reduce this risk.";
+    }
+
+    if (residualAllowed) {
+      if (form.residualLikelihood === null) nextErrors.residualLikelihood = "Reassess residual likelihood after implementation.";
+      if (form.residualImpact === null) nextErrors.residualImpact = "Reassess residual impact after implementation.";
+    }
+    if (form.status === "Closed" && form.implementationStatus !== "Verified") {
+      nextErrors.implementationStatus = "Set implementation status to Verified before closing the risk.";
+    }
+
+    if (Object.keys(nextErrors).length) {
+      setErrors(nextErrors);
+      focusAssessmentError(nextErrors, ["riskStatement", "category", "owner", "likelihood", "impact", "framework", "recommendedControls", "treatment", "dueDate", "mitigationPlan", "implementationStatus", "residualLikelihood", "residualImpact"]);
+      return false;
+    }
+    setErrors({});
+    return true;
+  }
+
+  function buildUpdatedRisk(): Risk {
+    return {
       ...risk,
       ...form,
       score,
@@ -801,7 +953,17 @@ function GrcAssessment({
       residualScore: residualAllowed ? residualScore : null,
       residualLevel: residualAllowed ? residualLevel : null,
       updatedAt: nowIso(),
-    });
+    };
+  }
+
+  async function save() {
+    if (!validateAssessment()) return;
+    await onSave(buildUpdatedRisk());
+  }
+
+  async function communicateValidated() {
+    if (!validateAssessment()) return;
+    await onCommunicate(buildUpdatedRisk());
   }
 
   return (
@@ -832,6 +994,7 @@ function GrcAssessment({
       <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-xs leading-5 text-blue-900">
         <strong>Guided assessment:</strong> Question 1 recommends Question 2 and prepares matching control/treatment suggestions. Question 6 filters Question 7. You can override any recommendation using Other / Custom.
       </div>
+      <p className="mt-3 text-xs font-semibold text-slate-500"><span className="text-red-600">*</span> Required fields are validated before save or communication. Treatment and residual fields become mandatory only when the workflow reaches those stages.</p>
 
       <div className="mt-5 grid gap-4 md:grid-cols-2">
         <div className="md:col-span-2">
@@ -840,6 +1003,9 @@ function GrcAssessment({
             value={form.riskStatement}
             options={contextualStatements}
             onChange={applyRiskStatement}
+            required
+            error={errors.riskStatement}
+            containerRef={(el) => { fieldRefs.current.riskStatement = el; }}
             placeholder="Write the formal risk statement in cause → event → business impact form."
             help="Select the closest statement generated from the submitted concern. Choose Other / Custom only when you need different wording."
           />
@@ -850,6 +1016,9 @@ function GrcAssessment({
           value={form.category}
           options={categoryChoices}
           onChange={applyCategory}
+          required
+          error={errors.category}
+          containerRef={(el) => { fieldRefs.current.category = el; }}
           customPlaceholder="Enter the approved internal risk category"
           help="Selecting a suggested statement in Question 1 automatically recommends the matching category. You can change it if the context requires."
         />
@@ -858,52 +1027,61 @@ function GrcAssessment({
           label="3. Who is accountable for owning this risk?"
           value={form.owner}
           options={ownerChoices}
-          onChange={(owner) => setForm({ ...form, owner })}
+          onChange={(owner) => { clearAssessmentError("owner"); setForm({ ...form, owner }); }}
+          required
+          error={errors.owner}
+          containerRef={(el) => { fieldRefs.current.owner = el; }}
           customPlaceholder="Enter the accountable role or owner"
           help="Choose the business or technical owner accountable for the risk. Use Other / Custom only when the correct owner is not listed."
         />
 
-        <div>
-          <label className="label">4. Which likelihood description best matches the current scenario?</label>
+        <div ref={(el) => { fieldRefs.current.likelihood = el; }}>
+          <label className="label">4. Which likelihood description best matches the current scenario?<span className="ml-1 text-red-600" aria-hidden="true">*</span></label>
           <select
-            className="input"
+            className={`input ${errors.likelihood ? "border-red-400 ring-1 ring-red-200" : ""}`}
+            aria-invalid={Boolean(errors.likelihood)}
             value={form.likelihood ?? ""}
-            onChange={(e) => setForm({ ...form, likelihood: e.target.value ? Number(e.target.value) : null })}
+            onChange={(e) => { clearAssessmentError("likelihood"); setForm({ ...form, likelihood: e.target.value ? Number(e.target.value) : null }); }}
           >
             <option value="">Select after reviewing the criteria</option>
             {likelihoodOptions.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
           </select>
+          {errors.likelihood ? <p className="mt-1 text-xs font-semibold text-red-600">{errors.likelihood}</p> : null}
           <Help>{likelihoodOptions.find((x) => x.value === form.likelihood)?.description || "Choose the level whose history, exposure, and control-effectiveness description best matches the current scenario."}</Help>
           <div className="mt-2">
             <RatingGuide title="View the 1-5 likelihood criteria" items={likelihoodOptions} />
           </div>
         </div>
 
-        <div>
-          <label className="label">5. Which impact description best matches the submitted business consequence?</label>
+        <div ref={(el) => { fieldRefs.current.impact = el; }}>
+          <label className="label">5. Which impact description best matches the submitted business consequence?<span className="ml-1 text-red-600" aria-hidden="true">*</span></label>
           <select
-            className="input"
+            className={`input ${errors.impact ? "border-red-400 ring-1 ring-red-200" : ""}`}
+            aria-invalid={Boolean(errors.impact)}
             value={form.impact ?? ""}
-            onChange={(e) => setForm({ ...form, impact: e.target.value ? Number(e.target.value) : null })}
+            onChange={(e) => { clearAssessmentError("impact"); setForm({ ...form, impact: e.target.value ? Number(e.target.value) : null }); }}
           >
             <option value="">Select after reviewing the criteria</option>
             {impactOptions.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
           </select>
+          {errors.impact ? <p className="mt-1 text-xs font-semibold text-red-600">{errors.impact}</p> : null}
           <Help>{impactOptions.find((x) => x.value === form.impact)?.description || `Use the management submission above as evidence: ${risk.businessImpactTypes.join(", ") || "no impact types selected"}.`}</Help>
           <div className="mt-2">
             <RatingGuide title="View the 1-5 impact criteria" items={impactOptions} />
           </div>
         </div>
 
-        <div>
-          <label className="label">6. Which regulatory framework applies to this organization / risk?</label>
+        <div ref={(el) => { fieldRefs.current.framework = el; }}>
+          <label className="label">6. Which regulatory framework applies to this organization / risk?<span className="ml-1 text-red-600" aria-hidden="true">*</span></label>
           <select
-            className="input"
+            className={`input ${errors.framework ? "border-red-400 ring-1 ring-red-200" : ""}`}
+            aria-invalid={Boolean(errors.framework)}
             value={form.framework}
             onChange={(e) => applyFramework(e.target.value as GrcAssessmentFormData["framework"])}
           >
             {frameworkOptions.map((x) => <option key={x}>{x}</option>)}
           </select>
+          {errors.framework ? <p className="mt-1 text-xs font-semibold text-red-600">{errors.framework}</p> : null}
           <Help>NCA ECC 2-2024 is the default MVP profile. Select CST CRF only when the organization is within CST regulatory scope.</Help>
         </div>
 
@@ -922,27 +1100,33 @@ function GrcAssessment({
             value={form.recommendedControls}
             options={contextualControls}
             onChange={applyControlAction}
+            required={treatmentStage && form.treatment === "Mitigation"}
+            error={errors.recommendedControls}
+            containerRef={(el) => { fieldRefs.current.recommendedControls = el; }}
             placeholder="Enter the exact validated control action."
             help="The options are filtered from the selected risk category. Choosing one also prepares a related mitigation-plan suggestion."
           />
         </div>
 
-        <div>
-          <label className="label">9. What treatment decision is being applied?</label>
+        <div ref={(el) => { fieldRefs.current.treatment = el; }}>
+          <label className="label">9. What treatment decision is being applied?{treatmentStage ? <span className="ml-1 text-red-600" aria-hidden="true">*</span> : null}</label>
           <select
-            className="input"
+            className={`input ${errors.treatment ? "border-red-400 ring-1 ring-red-200" : ""}`}
+            aria-invalid={Boolean(errors.treatment)}
             value={form.treatment}
-            onChange={(e) => setForm({ ...form, treatment: e.target.value as GrcAssessmentFormData["treatment"] })}
+            onChange={(e) => { clearAssessmentError("treatment"); setForm({ ...form, treatment: e.target.value as GrcAssessmentFormData["treatment"] }); }}
           >
             <option value="">Select treatment</option>
             {treatmentOptions.map((x) => <option key={x}>{x}</option>)}
           </select>
+          {errors.treatment ? <p className="mt-1 text-xs font-semibold text-red-600">{errors.treatment}</p> : null}
           <Help>Mitigation reduces the likelihood and/or impact through controls or corrective actions.</Help>
         </div>
 
-        <div>
-          <label className="label">10. When should the treatment be completed?</label>
-          <input type="date" className="input" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} />
+        <div ref={(el) => { fieldRefs.current.dueDate = el; }}>
+          <label className="label">10. When should the treatment be completed?{treatmentStage ? <span className="ml-1 text-red-600" aria-hidden="true">*</span> : null}</label>
+          <input type="date" className={`input ${errors.dueDate ? "border-red-400 ring-1 ring-red-200" : ""}`} aria-invalid={Boolean(errors.dueDate)} value={form.dueDate} onChange={(e) => { clearAssessmentError("dueDate"); setForm({ ...form, dueDate: e.target.value }); }} />
+          {errors.dueDate ? <p className="mt-1 text-xs font-semibold text-red-600">{errors.dueDate}</p> : null}
         </div>
 
         <div className="md:col-span-2">
@@ -950,21 +1134,26 @@ function GrcAssessment({
             label="11. What exact action will be implemented?"
             value={form.mitigationPlan}
             options={contextualPlans}
-            onChange={(mitigationPlan) => setForm({ ...form, mitigationPlan })}
+            onChange={(mitigationPlan) => { clearAssessmentError("mitigationPlan"); setForm({ ...form, mitigationPlan }); }}
+            required={treatmentStage}
+            error={errors.mitigationPlan}
+            containerRef={(el) => { fieldRefs.current.mitigationPlan = el; }}
             placeholder="Enter the exact treatment action, accountable owner, evidence, and expected result."
             help="The suggested plans are linked to the selected risk category and control action. Choose Other / Custom when a different plan is required."
           />
         </div>
 
-        <div>
-          <label className="label">12. What is the current implementation status?</label>
+        <div ref={(el) => { fieldRefs.current.implementationStatus = el; }}>
+          <label className="label">12. What is the current implementation status?<span className="ml-1 text-red-600" aria-hidden="true">*</span></label>
           <select
-            className="input"
+            className={`input ${errors.implementationStatus ? "border-red-400 ring-1 ring-red-200" : ""}`}
+            aria-invalid={Boolean(errors.implementationStatus)}
             value={form.implementationStatus}
-            onChange={(e) => setForm({ ...form, implementationStatus: e.target.value as GrcAssessmentFormData["implementationStatus"] })}
+            onChange={(e) => { clearAssessmentError("implementationStatus"); setForm({ ...form, implementationStatus: e.target.value as GrcAssessmentFormData["implementationStatus"] }); }}
           >
             {implementationStatusOptions.map((x) => <option key={x}>{x}</option>)}
           </select>
+          {errors.implementationStatus ? <p className="mt-1 text-xs font-semibold text-red-600">{errors.implementationStatus}</p> : null}
         </div>
 
         <div>
@@ -974,7 +1163,7 @@ function GrcAssessment({
         </div>
 
         <div>
-          <label className="label">Workflow Status</label>
+          <label className="label">Workflow Status<span className="ml-1 text-red-600" aria-hidden="true">*</span></label>
           <select
             className="input"
             value={form.status}
@@ -989,30 +1178,34 @@ function GrcAssessment({
           <p className="mt-1 text-lg font-bold text-slate-950">{score ?? "—"} · {level ?? "Not assessed"}</p>
         </div>
 
-        <div>
-          <label className="label">13. After the treatment is implemented, how likely is the scenario to occur?</label>
+        <div ref={(el) => { fieldRefs.current.residualLikelihood = el; }}>
+          <label className="label">13. After the treatment is implemented, how likely is the scenario to occur?{residualAllowed ? <span className="ml-1 text-red-600" aria-hidden="true">*</span> : null}</label>
           <select
-            className="input disabled:bg-slate-100"
+            className={`input disabled:bg-slate-100 ${errors.residualLikelihood ? "border-red-400 ring-1 ring-red-200" : ""}`}
+            aria-invalid={Boolean(errors.residualLikelihood)}
             disabled={!residualAllowed}
             value={residualAllowed ? (form.residualLikelihood ?? "") : ""}
-            onChange={(e) => setForm({ ...form, residualLikelihood: e.target.value ? Number(e.target.value) : null })}
+            onChange={(e) => { clearAssessmentError("residualLikelihood"); setForm({ ...form, residualLikelihood: e.target.value ? Number(e.target.value) : null }); }}
           >
             <option value="">Not reassessed</option>
             {likelihoodOptions.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
           </select>
+          {errors.residualLikelihood ? <p className="mt-1 text-xs font-semibold text-red-600">{errors.residualLikelihood}</p> : null}
         </div>
 
-        <div>
-          <label className="label">14. If the scenario still occurs, how severe would the remaining impact be?</label>
+        <div ref={(el) => { fieldRefs.current.residualImpact = el; }}>
+          <label className="label">14. If the scenario still occurs, how severe would the remaining impact be?{residualAllowed ? <span className="ml-1 text-red-600" aria-hidden="true">*</span> : null}</label>
           <select
-            className="input disabled:bg-slate-100"
+            className={`input disabled:bg-slate-100 ${errors.residualImpact ? "border-red-400 ring-1 ring-red-200" : ""}`}
+            aria-invalid={Boolean(errors.residualImpact)}
             disabled={!residualAllowed}
             value={residualAllowed ? (form.residualImpact ?? "") : ""}
-            onChange={(e) => setForm({ ...form, residualImpact: e.target.value ? Number(e.target.value) : null })}
+            onChange={(e) => { clearAssessmentError("residualImpact"); setForm({ ...form, residualImpact: e.target.value ? Number(e.target.value) : null }); }}
           >
             <option value="">Not reassessed</option>
             {impactOptions.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
           </select>
+          {errors.residualImpact ? <p className="mt-1 text-xs font-semibold text-red-600">{errors.residualImpact}</p> : null}
         </div>
 
         <div className="md:col-span-2">
@@ -1024,14 +1217,7 @@ function GrcAssessment({
         <button className="btn-primary" onClick={save}>Save GRC Assessment</button>
         <button
           className="btn-secondary"
-          onClick={() => onCommunicate({
-            ...risk,
-            ...form,
-            score,
-            level,
-            residualScore: residualAllowed ? residualScore : null,
-            residualLevel: residualAllowed ? residualLevel : null,
-          })}
+          onClick={communicateValidated}
         >
           {risk.communicationDate ? "Update Communication Date" : "Mark Risk Communicated"}
         </button>
@@ -1099,7 +1285,9 @@ export default function GrcDashboard() {
   const [previewRisk, setPreviewRisk] = useState<Risk | null>(null);
   const [query, setQuery] = useState("");
   const [showAudit, setShowAudit] = useState(false);
+  const [registerFilter, setRegisterFilter] = useState<{ kind: "all" | "level" | "status" | "plan" | "department"; value?: string }>({ kind: "all" });
   const auditSectionRef = useRef<HTMLElement | null>(null);
+  const registerSectionRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -1138,20 +1326,39 @@ export default function GrcDashboard() {
     if (grcDepartmentFilter === "All Departments") return risks;
     return risks.filter((r) => r.department === grcDepartmentFilter);
   }, [risks, role, department, grcDepartmentFilter]);
+  const today = todayIsoDate();
+  const activeRisks = useMemo(() => visibleRisks.filter((r) => r.status !== "Closed"), [visibleRisks]);
+
+  function applyRegisterFilter(kind: "all" | "level" | "status" | "plan" | "department", value?: string) {
+    setRegisterFilter({ kind, value });
+    window.setTimeout(() => registerSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  }
+
   const filtered = useMemo(
-    () => visibleRisks.filter((r) => `${r.id} ${r.title} ${r.department} ${r.category} ${r.status} ${r.owner}`.toLowerCase().includes(query.toLowerCase())),
-    [visibleRisks, query],
+    () => visibleRisks.filter((r) => {
+      const searchable = `${r.id} ${r.title} ${r.department} ${r.category} ${r.status} ${r.owner}`.toLowerCase();
+      if (!searchable.includes(query.toLowerCase())) return false;
+      if (registerFilter.kind === "level") return r.level === registerFilter.value;
+      if (registerFilter.kind === "status") return r.status === registerFilter.value;
+      if (registerFilter.kind === "plan") return getPlanState(r, today) === registerFilter.value;
+      if (registerFilter.kind === "department") return r.department === registerFilter.value;
+      return true;
+    }),
+    [visibleRisks, query, registerFilter, today],
   );
   const metrics = useMemo(() => ({
     total: visibleRisks.length,
-    critical: visibleRisks.filter((r) => r.level === "Critical").length,
-    high: visibleRisks.filter((r) => r.level === "High").length,
-    open: visibleRisks.filter((r) => r.status !== "Closed").length,
-    overdue: visibleRisks.filter((r) => r.dueDate && r.status !== "Closed" && new Date(r.dueDate) < new Date()).length,
-  }), [visibleRisks]);
+    critical: activeRisks.filter((r) => r.level === "Critical").length,
+    high: activeRisks.filter((r) => r.level === "High").length,
+    withinPlan: activeRisks.filter((r) => getPlanState(r, today) === "Within Plan").length,
+    overdue: activeRisks.filter((r) => getPlanState(r, today) === "Overdue").length,
+    noPlan: activeRisks.filter((r) => getPlanState(r, today) === "No Plan").length,
+    closed: visibleRisks.filter((r) => r.status === "Closed").length,
+  }), [visibleRisks, activeRisks, today]);
   const lastUpdated = useMemo(() => visibleRisks.map((r) => r.updatedAt).filter(Boolean).sort().at(-1) || "", [visibleRisks]);
-  const levelData = levelOrder.map((name) => ({ name, value: visibleRisks.filter((r) => r.level === name).length })).filter((x) => x.value);
+  const levelData = levelOrder.map((name) => ({ name, value: activeRisks.filter((r) => r.level === name).length })).filter((x) => x.value);
   const statusData = statusOptions.map((name) => ({ name, value: visibleRisks.filter((r) => r.status === name).length })).filter((x) => x.value);
+  const departmentData = departments.map((name) => ({ name, value: activeRisks.filter((r) => r.department === name).length })).filter((x) => x.value);
 
   async function submitConcern(form: SubmissionFormData) {
     try {
@@ -1298,7 +1505,7 @@ export default function GrcDashboard() {
         <header className="mb-6 rounded-3xl bg-slate-950 p-6 text-white shadow-sm md:p-8">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="mb-2 inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-slate-200">Cybersecurity GRC Risk Management · MVP V2</p>
+              <p className="mb-2 inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-slate-200">Cybersecurity GRC Risk Management · MVP V2.5</p>
               <h1 className="text-3xl font-black md:text-4xl">Risk Management & Executive Dashboard</h1>
               <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-300 md:text-base">Management-level risk submission, centralized Cybersecurity GRC assessment, treatment tracking, department segregation, and Saudi regulatory alignment.</p>
             </div>
@@ -1366,77 +1573,123 @@ export default function GrcDashboard() {
           </div>
         ) : null}
 
-        <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <MetricCard title="Total Risks" value={metrics.total} helper={role === "Cybersecurity GRC" ? "Enterprise portfolio" : "Department portfolio"} icon={<FileText className="h-6 w-6" />} />
-          <MetricCard title="Critical" value={metrics.critical} helper="Immediate attention" icon={<AlertTriangle className="h-6 w-6" />} />
-          <MetricCard title="High" value={metrics.high} helper="Prioritized treatment" icon={<ShieldCheck className="h-6 w-6" />} />
-          <MetricCard title="Open" value={metrics.open} helper="Not closed" icon={<Clock className="h-6 w-6" />} />
-          <MetricCard title="Overdue Plans" value={metrics.overdue} helper="Past due and not closed" icon={<CheckCircle2 className="h-6 w-6" />} />
+        <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+          <MetricCard title="Total Risks" value={metrics.total} helper={role === "Cybersecurity GRC" ? "Enterprise portfolio" : "Department portfolio"} icon={<FileText className="h-6 w-6" />} onClick={() => applyRegisterFilter("all")} active={registerFilter.kind === "all"} />
+          <MetricCard title="Critical" value={metrics.critical} helper="Active risks · immediate attention" icon={<AlertTriangle className="h-6 w-6" />} onClick={() => applyRegisterFilter("level", "Critical")} active={registerFilter.kind === "level" && registerFilter.value === "Critical"} />
+          <MetricCard title="High" value={metrics.high} helper="Active risks · prioritized treatment" icon={<ShieldCheck className="h-6 w-6" />} onClick={() => applyRegisterFilter("level", "High")} active={registerFilter.kind === "level" && registerFilter.value === "High"} />
+          <MetricCard title="Within Plan" value={metrics.withinPlan} helper="Plan and due date in place" icon={<CheckCircle2 className="h-6 w-6" />} onClick={() => applyRegisterFilter("plan", "Within Plan")} active={registerFilter.kind === "plan" && registerFilter.value === "Within Plan"} />
+          <MetricCard title="Overdue Plans" value={metrics.overdue} helper="Past due and not closed" icon={<Clock className="h-6 w-6" />} onClick={() => applyRegisterFilter("plan", "Overdue")} active={registerFilter.kind === "plan" && registerFilter.value === "Overdue"} />
+          <MetricCard title="No Plan" value={metrics.noPlan} helper="Missing plan or due date" icon={<FileText className="h-6 w-6" />} onClick={() => applyRegisterFilter("plan", "No Plan")} active={registerFilter.kind === "plan" && registerFilter.value === "No Plan"} />
         </section>
 
-        <section className="mt-6 grid gap-4 lg:grid-cols-2">
+        <section className={`mt-6 grid gap-4 ${role === "Cybersecurity GRC" ? "xl:grid-cols-3" : "lg:grid-cols-2"}`}>
           <div className="card p-5">
-            <h2 className="mb-4 text-lg font-bold">Risks by Level</h2>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={levelData} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                  <YAxis allowDecimals={false} width={30} />
-                  <Tooltip />
-                  <Bar dataKey="value" radius={[8, 8, 0, 0]}>
-                    {levelData.map((x) => <Cell key={x.name} fill={levelColors[x.name]} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="mb-2 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold">Severity Distribution</h2>
+                <p className="mt-1 text-xs text-slate-500">Active risks only. Select a severity to filter the Risk Register.</p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{activeRisks.length} active</span>
+            </div>
+            <div className="grid items-center gap-4 sm:grid-cols-[190px_1fr]">
+              <div className="relative h-52">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={levelData} dataKey="value" nameKey="name" innerRadius={54} outerRadius={82} paddingAngle={2} labelLine={false} label={false}>
+                      {levelData.map((x) => <Cell key={x.name} fill={levelColors[x.name]} />)}
+                    </Pie>
+                    <Tooltip formatter={(value, name) => [value, name]} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-3xl font-black text-slate-950">{activeRisks.length}</span>
+                  <span className="text-[11px] font-semibold text-slate-500">Active risks</span>
+                </div>
+              </div>
+              <div className="grid gap-2">
+                {levelOrder.map((name) => {
+                  const value = activeRisks.filter((r) => r.level === name).length;
+                  return (
+                    <button key={name} type="button" onClick={() => applyRegisterFilter("level", name)} className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-xs transition hover:bg-slate-50 ${registerFilter.kind === "level" && registerFilter.value === name ? "border-slate-900 bg-slate-50" : "border-slate-100"}`}>
+                      <span className="flex items-center gap-2 font-semibold text-slate-700"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: levelColors[name] }} />{name}</span>
+                      <strong className="text-slate-950">{value}</strong>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
           <div className="card p-5">
-            <div className="mb-2">
-              <h2 className="text-lg font-bold">Risks by Workflow Status</h2>
-              <p className="mt-1 text-xs text-slate-500">Status labels are listed below the chart to keep long workflow names readable.</p>
+            <div className="mb-2 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold">Workflow Status Distribution</h2>
+                <p className="mt-1 text-xs text-slate-500">Shows where risks are in the end-to-end workflow. Closed remains visible here as an outcome.</p>
+              </div>
+              <button type="button" onClick={() => applyRegisterFilter("status", "Closed")} className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">{metrics.closed} closed</button>
             </div>
-            <div className="grid items-center gap-4 md:grid-cols-[220px_1fr]">
-              <div className="h-56">
+            <div className="grid items-center gap-4 sm:grid-cols-[190px_1fr]">
+              <div className="h-52">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie
-                      data={statusData}
-                      dataKey="value"
-                      nameKey="name"
-                      innerRadius={54}
-                      outerRadius={82}
-                      paddingAngle={2}
-                      labelLine={false}
-                      label={false}
-                    >
+                    <Pie data={statusData} dataKey="value" nameKey="name" innerRadius={54} outerRadius={82} paddingAngle={2} labelLine={false} label={false}>
                       {statusData.map((x) => <Cell key={x.name} fill={statusColors[x.name] || "#64748b"} />)}
                     </Pie>
                     <Tooltip formatter={(value, name) => [value, name]} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-1">
+              <div className="grid gap-2 max-h-56 overflow-y-auto pr-1">
                 {statusData.map((item) => (
-                  <div key={item.name} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
-                    <span className="flex min-w-0 items-center gap-2 font-semibold text-slate-700">
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: statusColors[item.name] || "#64748b" }} />
-                      <span className="leading-4" title={item.name}>{item.name}</span>
-                    </span>
+                  <button key={item.name} type="button" onClick={() => applyRegisterFilter("status", item.name)} className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-xs transition hover:bg-slate-50 ${registerFilter.kind === "status" && registerFilter.value === item.name ? "border-slate-900 bg-slate-50" : "border-slate-100"}`}>
+                    <span className="flex min-w-0 items-center gap-2 font-semibold text-slate-700"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: statusColors[item.name] || "#64748b" }} /><span className="leading-4">{item.name}</span></span>
                     <strong className="shrink-0 text-slate-950">{item.value}</strong>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
           </div>
+
+          {role === "Cybersecurity GRC" ? (
+            <div className="card p-5">
+              <div className="mb-2">
+                <h2 className="text-lg font-bold">Department Risk Distribution</h2>
+                <p className="mt-1 text-xs text-slate-500">Active risks by department. Select a bar to filter the Risk Register.</p>
+              </div>
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={departmentData} layout="vertical" margin={{ top: 8, right: 18, left: 20, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" allowDecimals={false} />
+                    <YAxis type="category" dataKey="name" width={125} tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Bar
+  dataKey="value"
+  fill="#334155"
+  radius={[0, 8, 8, 0]}
+  cursor="pointer"
+  onClick={(entry) =>
+    entry?.name && applyRegisterFilter("department", entry.name)
+  }
+/>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          ) : null}
         </section>
 
-        <section className="card mt-6 overflow-hidden">
+        <section ref={registerSectionRef} className="card mt-6 scroll-mt-6 overflow-hidden">
           <div className="flex flex-col gap-3 border-b border-slate-100 p-5 md:flex-row md:items-center md:justify-between">
             <div>
               <h2 className="text-xl font-bold">Risk Register</h2>
               <p className="mt-1 text-sm text-slate-500">{role === "Cybersecurity GRC" ? (grcDepartmentFilter === "All Departments" ? "Full GRC portfolio with assessment actions." : `${grcDepartmentFilter} portfolio filtered for GRC review.`) : `${department} risks only.`}</p>
+              {registerFilter.kind !== "all" ? (
+                <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-xs font-bold text-white">
+                  Filter: {registerFilter.value}
+                  <button type="button" onClick={() => setRegisterFilter({ kind: "all" })} className="rounded-full p-0.5 hover:bg-white/15" aria-label="Clear dashboard filter"><X className="h-3.5 w-3.5" /></button>
+                </div>
+              ) : null}
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
               <input className="input w-full sm:w-72" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search risks..." />
@@ -1477,6 +1730,9 @@ export default function GrcDashboard() {
                 </tr>
               </thead>
               <tbody>
+                {filtered.length === 0 ? (
+                  <tr className="border-t border-slate-100"><td colSpan={10} className="p-8 text-center text-sm text-slate-500">No risks match the current search / dashboard filter.</td></tr>
+                ) : null}
                 {filtered.map((r) => {
                   const updated = dateTimeCompact(r.updatedAt);
                   return (
